@@ -1,0 +1,31 @@
+CREATE DATABASE IF NOT EXISTS openDisk;
+USE openDisk;
+
+CREATE TABLE IF NOT EXISTS `user` (
+    user_id VARCHAR(36) PRIMARY KEY,
+    user_name VARCHAR(255) NOT NULL,
+    user_role VARCHAR(255),
+    password_hash VARCHAR(255) NOT NULL
+    );
+
+CREATE TABLE IF NOT EXISTS files (
+                                     file_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                                     file_path VARCHAR(255) NOT NULL,
+    file_name VARCHAR(255),
+    file_size VARCHAR(50),
+    content_type VARCHAR(100),
+    file_owner VARCHAR(100),
+    upload_time DATETIME,
+    file_hash VARCHAR(255)
+    );
+
+
+-- 插入示例数据
+INSERT INTO `user` (user_id, user_name, user_role, password_hash)
+VALUES (UUID(), 'Alice', 'admin', 'hashed_password_1');
+
+INSERT INTO `user` (user_id, user_name, user_role, password_hash)
+VALUES (UUID(), 'Bob', 'user', 'hashed_password_2');
+
+INSERT INTO `user` (user_id, user_name, user_role, password_hash)
+VALUES (UUID(), 'Charlie', 'user', 'hashed_password_3');

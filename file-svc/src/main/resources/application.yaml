@@ -1,0 +1,37 @@
+server:
+  port: 8002
+spring:
+  codec:
+    max-in-memory-size: 500MB
+  datasource:
+    url: jdbc:mysql://localhost:3306/openDisk
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  webflux:
+    multipart:
+      max-part-size: 10000MB    # 单个文件最大限制为 10MB
+      max-request-size: 100000MB # 整个请求最大限制为 100MB
+  servlet:
+    multipart:
+      max-request-size: 10000MB
+      max-file-size: 100000MB
+  main:
+    web-application-type: reactive
+file:
+  upload-dir: data
+
+
+
+open-disk:
+  uid-endpoint: 192.168.31.4:8003
+
+minio:
+  url: http://localhost:9000
+  access-key: root
+  secret-key: 123456789@A
+
+logging:
+  level:
+    org.springframework.web: DEBUG
+    org.springframework.http: DEBUG

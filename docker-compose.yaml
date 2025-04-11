@@ -1,0 +1,41 @@
+version: "3.8"
+services:
+  mysql:
+    build: ./mysql
+    container_name: mysql_container
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: openDisk
+    volumes:
+      - mysql-data:/var/lib/mysql
+  minio:
+    build: ./minio
+    container_name: minio_container
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: root
+      MINIO_ROOT_PASSWORD: 123456789@A
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+  vault:
+    command:
+      - "server"
+    build: ./KES-Vault/docker
+    ports:
+      - "8201:8200"
+    cap_add:
+      - IPC_LOCK   # 防止 Vault 使用交换内存，提高安全性
+    volumes:
+      - /docker/config/config.hcl:/KES-Vault/docker/config/config.hcl  # 挂载配置文件
+      - ./vault_data:/vault/data
+    environment:
+      VAULT_ADDR: http://127.0.0.1:8201
+volumes:
+  mysql-data:
+  minio-data:
+  vault_data:

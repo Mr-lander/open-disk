@@ -1,0 +1,28 @@
+spring:
+  main:
+    web-application-type: reactive
+  cloud:
+    gateway:
+      routes:
+        - id: websocket-route
+          uri: http://localhost:8002
+          predicates:
+            - Path=/ws/**  # 根据path来的ws
+#          filters:
+#            - StripPrefix=1  # 如果有前缀，可以去除前缀
+        - id: uid-generator
+          uri: http://localhost:8003
+          predicates:
+            - Path=/api/v1/uids/**
+        - id: user-svc
+          uri: http://localhost:8001
+          predicates:
+            - Path=/api/v1/users/**
+        - id: file-svc
+          uri: http://localhost:8002
+          predicates:
+            - Path=/api/v1/files/**
+server:
+  port: 8080
+
+
