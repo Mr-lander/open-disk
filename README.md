@@ -16,7 +16,7 @@
 | ------------------------ | ----------------------------------------- |
 | 🔥 **HOT/COLD 分层**       | 热端 MinIO、冷端 Ceph RGW 按访问频次自动迁移            |
 | 🔐 **Vault 密钥管理**        | 上传文件名/路径对用户侧加密，密钥存储在 HashiCorp Vault      |
-| 🗃️ **Elasticsearch 检索** | 文件元数据实时索引                         |
+| 🗃️ **Elasticsearch 检索** | 文件元数据实时索引                       |
 | 🪝 **WebSocket 实时进度**    | 上传进度条、在线预览、秒传                             |
 | 🦾 **微服务架构**             | Spring Cloud OpenFeign 调用，Gateway 统一入口    |
 | 🚀 **容器化**      | Docker Compose 一键启动 |
@@ -89,6 +89,60 @@ pnpm build           # 生成 dist/
 ```
 
 构建产物将由下方 docker-compose 中的 **nginx** 容器挂载到 `/usr/share/nginx/html`。
+
+---
+
+## 🧑‍💻 开发流程 (Live Dev)
+
+> 👇 以下步骤面向本地调试：IDE + 热重载 + 桌面浏览器。
+
+1. **克隆并导入项目**
+
+   ```bash
+   git clone https://github.com/your-org/open-disk.git
+   cd open-disk
+   ```
+
+   在 IntelliJ IDEA / Eclipse 2024+ 中直接 *Open as Maven Project*，所有微服务自动以 Maven module 形式识别。
+
+2. **启动基础设施容器**
+   仅启动数据库、MinIO、ES、Vault（不开微服务）：
+
+   ```bash
+   docker compose -f docker-compose-dev.yaml up -d mysql minio elasticsearch vault
+   ```
+
+3. **第一次初始化 Vault**
+
+   ```bash
+   # 生成初始密钥 & root token（只需一次）
+   docker exec -it vault /bin/sh -c "vault operator init -key-shares=1 -key-threshold=1"
+   # 复制输出的 Unseal Key 和 Root Token
+   # 解封 Vault（同样只需一次）
+   vault operator unseal <Unseal-Key>
+   export VAULT_ADDR=http://127.0.0.1:8200 && vault login <Root-Token>
+   ```
+   或直接打开http://127.0.0.1:8200进行初始操作
+
+5. **IDE 启动微服务**
+
+   * 选中模块，如 `file-svc` -> *Run FileApplication*，确保 VM Options：`-Dspring.profiles.active=dev`。
+   * 其他服务（`user-svc`, `uid-generator`, `gateway`…）同理，IDE Console 输出即日志。
+
+6. **前端热重载**
+
+   ```bash
+   cd open-disk-frontend
+   pnpm i
+   pnpm dev        # 默认 http://localhost:5173
+   ```
+
+   Vite 代理 `/api/**` -> `http://localhost:8080` (Gateway)。
+
+7. **文件上传/下载**
+   访问 `http://localhost:5173`，登录→上传→控制台可见实时进度；MinIO Console `http://localhost:9001` 可检查对象。
+
+> 当需要检查冷数据迁移，可手动 `docker compose up -d ceph-rgw cold-tier-svc`，并在 `cold-tier-svc` 日志查看迁移记录。
 
 ---
 
