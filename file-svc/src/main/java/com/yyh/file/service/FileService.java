@@ -1,13 +1,17 @@
 package com.yyh.file.service;
 
 import com.yyh.commonlib.utils.HashUtils;
+import com.yyh.file.client.KesVaultWebClient;
 import com.yyh.file.client.UidServiceClient;
-import com.yyh.file.client.VaultServiceClient;
 import com.yyh.file.domain.File;
 import com.yyh.file.repository.FileRepository;
+import com.yyh.file.search.FileDocument;
+import com.yyh.file.search.FileSearchRepository;
 import com.yyh.file.socket.WebSocketSessionHolder;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import io.minio.MinioClient;
+import io.minio.RemoveObjectArgs;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.codec.multipart.FilePart;
@@ -17,6 +21,7 @@ import reactor.core.publisher.Mono;
 import java.io.IOException;
 import java.nio.file.*;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicLong;
 
 
@@ -29,18 +34,33 @@ public class FileService {
     private final FileRepository fileRepository;
     private final WebSocketSessionHolder sessionHolder;
     private final UidServiceClient uidServiceClient;
-    private final MinioService minioService;
+    private final MinioService minioService; // 只负责热端上传
 
-    @Autowired
-    private VaultServiceClient vaultServiceClient;
+
+    private final MinioClient hotMinioClient;              // 新增：直调热端 MinIO
+    private final MinioClient coldMinioClient;             // 新增：直调冷端 Ceph RGW
+
+    private final KesVaultWebClient vaultClient;           // 新增：Vault 客户端
+    private final FileSearchRepository fileSearchRepository;
+
 
     public FileService(@Value("${file.upload-dir}") String uploadDir, FileRepository fileRepository,
-                       WebSocketSessionHolder sessionHolder, UidServiceClient uidServiceClient, MinioService minioService) {
+                       WebSocketSessionHolder sessionHolder, UidServiceClient uidServiceClient,  // 在这里给参数加 @Qualifier
+                       //关键：@Qualifier 一定要贴在构造器参数上（Spring 才能在解析依赖时用它来区分 Bean），而不是只放在字段上。
+                       @Qualifier("hotMinioClient") MinioClient hotMinioClient,
+                       @Qualifier("coldMinioClient") MinioClient coldMinioClient,
+                        MinioService minioService,
+             KesVaultWebClient vaultClient, FileSearchRepository fileSearchRepository) {
         this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
         this.fileRepository = fileRepository;
         this.sessionHolder = sessionHolder;
         this.uidServiceClient = uidServiceClient;
         this.minioService = minioService;
+        this.hotMinioClient = hotMinioClient;
+        this.coldMinioClient = coldMinioClient;
+        this.vaultClient = vaultClient;
+        this.fileSearchRepository = fileSearchRepository;
+
         try {
             Files.createDirectories(this.fileStorageLocation);
         } catch (IOException ex) {
@@ -72,7 +92,7 @@ public class FileService {
                     )
                     // 当文件写入完成后，再执行后续操作
                     .then(Mono.fromCallable(() -> {
-                        // 使用文件路径计算哈希（这里假设有一个同步方法，根据文件路径计算 SHA256）
+                        // 使用文件路径计算哈希（这里有一个同步方法，根据文件路径计算 SHA256）
                         String hash = HashUtils.calculateSHA256_LocalPath(targetLocation);
                         // 获取 Content-Type（如果没有则默认 application/octet-stream）
                         String contentType = file.headers().getContentType() != null
@@ -85,12 +105,20 @@ public class FileService {
                         fileEntity.setFileId(fileId);
                         fileEntity.setFileName(file.filename());
                         fileEntity.setFile_hash(hash);
-                        fileEntity.setFile_owner(userId);
+                        fileEntity.setFileOwner(Long.valueOf(userId));
                         fileEntity.setContent_type(contentType);
-                        fileEntity.setFile_path("null");
+                        fileEntity.setFilePath("null");
                         fileEntity.setUpload_time(LocalDateTime.now());
                         fileEntity.setFile_size(String.valueOf(fileSize));
+                        fileEntity.setAccess_count(1);
+                        fileEntity.setStorageTier("HOT");
+                        fileEntity.setLast_accessed(LocalDateTime.now());
                         fileRepository.save(fileEntity);
+                        FileDocument doc = new FileDocument(
+                                fileId, Long.valueOf(userId), fileName, "HOT",
+                                fileEntity.getUpload_time().toInstant(ZoneOffset.UTC));
+                        fileSearchRepository.save(doc);
+
                         return targetLocation.toString();
                     }))
                     .flatMap(path -> {
@@ -98,7 +126,7 @@ public class FileService {
                         return minioService.uploadFileToMinio(targetLocation, userId)
                                 .doOnSuccess(minioPath -> {
                                     File fileEntity = fileRepository.findByFileId(fileId);
-                                    fileEntity.setFile_path(minioPath);
+                                    fileEntity.setFilePath(minioPath);
                                     fileRepository.save(fileEntity);
                                     try {
                                         Files.delete(targetLocation); // 删除本地文件缓存
@@ -122,174 +150,51 @@ public class FileService {
         });
     }
 
-//    public Mono<String> storeFile(FilePart file, String userId, String sessionId) {
-//        String fileName = file.filename();
-//        Path targetLocation = this.fileStorageLocation.resolve(fileName);
-//
-//        AtomicLong totalBytesWritten = new AtomicLong(0);
-//
-//        return uidServiceClient.fetchUid().flatMap(fileId -> {
-//            // 先计算哈希，然后保存文件到本地，异步上传到minio
-//            return HashUtils.calculateSHA256_FilePart(file)
-//                    .flatMap(hash -> {
-//                        return file.transferTo(targetLocation)
-//                                .then(Mono.fromCallable(() -> {
-//                                    // FilePart 没有直接的 content_type 属性。不过，我们可以通过 FilePart 的 headers() 方法来获取文件的 Content-Type，也就是 MIME 类型。
-//                                    String contentType = file.headers().getContentType() != null
-//                                            ? file.headers().getContentType().toString()
-//                                            : "application/octet-stream";
-//                                    System.out.println("上传文件类型: "+contentType);
-//                                    // 这里可以保存文件元数据到数据库
-//                                    File fileEntity = new File();
-//                                    fileEntity.setFileId(fileId);
-//                                    fileEntity.setFileName(file.filename());
-//                                    fileEntity.setFile_hash(hash);
-//                                    fileEntity.setFile_owner(userId);
-//                                    fileEntity.setContent_type(contentType);
-//                                    fileEntity.setFile_path("null");
-//                                    fileEntity.setUpload_time(LocalDateTime.now());
-//                                    // 假设 fileRepository 是阻塞的，实际应改为响应式
-//                                    fileRepository.save(fileEntity);
-//                                    return targetLocation.toString();
-//                                }));
-//                    })
-//                    .flatMap(path -> {
-//                        // 异步上传到 MinIO 并更新数据库
-//                        return minioService.uploadFileToMinio(targetLocation, userId)
-//                                .doOnSuccess(minioPath -> {
-//                                    // 更新数据库（阻塞，需改为响应式）
-//                                    File fileEntity = fileRepository.findByFileId(fileId);
-//                                    fileEntity.setFile_path(minioPath);
-//                                    fileRepository.save(fileEntity);
-//                                    try {
-//                                        Files.delete(targetLocation); // 删除本地文件
-//                                        System.out.println("已删除文件缓存，id："+fileId);
-//                                    } catch (IOException e) {
-//                                        throw new RuntimeException("删除本地文件失败", e);
-//                                    }
-//                                })
-//                                .thenReturn(path);
-//                    })
-//                    .doOnNext(path -> {
-//// 通过 Sink 发送 WebSocket 消息
-//                        var wrapper = sessionHolder.getSessionWrapper(sessionId);
-//                        if (wrapper != null) {
-//                            // 通过包装中的 session 创建 WebSocketMessage
-//                            WebSocketMessage message = wrapper.getSession().textMessage("{\"progress\": 100}");
-//                            // 将消息推送到客户端
-//                            wrapper.getSink().tryEmitNext(message);
-//                        }
-//                    })
-//                    .onErrorMap(e -> new RuntimeException("存储文件失败：" + fileName, e));
-//        });
-//    }
+    public Mono<Void> deleteFile(Long userId, String cipherKey) {
+        return vaultClient.getEncryptionKey(userId)
+                .flatMap(key -> {
+                    String objectName = HashUtils.decryptWithKey(cipherKey, key);
+                    File file = fileRepository.findByFileOwnerAndFileName(userId, objectName);
+                    if (file == null) {
+                        return Mono.error(new RuntimeException("文件不存在"));
+                    }
+
+                    // 选择客户端：HOT 用 hotMinioClient，COLD 用 coldMinioClient
+                    MinioClient client =
+                            "COLD".equalsIgnoreCase(file.getStorageTier())
+                                    ? coldMinioClient
+                                    : hotMinioClient;
+
+                    // 1）删 MinIO/Ceph RGW 上的对象
+                    Mono<Void> deleteObject = Mono.fromRunnable(() -> {
+                        try {
+                            client.removeObject(
+                                    RemoveObjectArgs.builder()
+                                            .bucket(String.valueOf(userId))
+                                            .object(objectName)
+                                            .build()
+                            );
+                        } catch (Exception e) {
+                            throw new RuntimeException("删除对象失败: " + e.getMessage(), e);
+                        }
+                    });
+
+                    // 2）删 MySQL 元数据
+                    Mono<Void> deleteDb = Mono.fromRunnable(() -> {
+                        fileRepository.deleteById(file.getFileId());
+                    });
+
+                    // 3）删 ES 索引
+                    Mono<Void> deleteEs = Mono.fromRunnable(() -> {
+                        fileSearchRepository.deleteById(file.getFileId());
+                    });
+
+                    return deleteObject
+                            .then(deleteDb)
+                            .then(deleteEs);
+                });
+    }
+
 
 
 }
-
-
-
-// Spring MVC
-//@Service
-//public class FileService {
-//
-//    private final Path fileStorageLocation;
-//    private final FileRepository fileRepository;
-//
-//    private final WebSocketSessionHolder sessionHolder; // 自定义类，用于持有 WebSocketSession
-//
-//    @Autowired
-//    private UidClient uidClient;
-//
-//    @Autowired
-//    private MinioService minioService;
-//
-//    public FileService(@Value("${file.upload-dir}") String uploadDir, FileRepository fileRepository,WebSocketSessionHolder sessionHolder) {
-//        // uploadDir 配置为 data
-//        this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
-//        this.fileRepository = fileRepository;
-//        this.sessionHolder = sessionHolder;
-//        try {
-//            Files.createDirectories(this.fileStorageLocation);
-//        } catch (IOException ex) {
-//            throw new RuntimeException("无法创建文件存储目录", ex);
-//        }
-//    }
-//
-//    // 异步任务
-//    @Async
-//    public void uploadToMinioAndClean(Path localFile, String userId, Long fileId) {
-//        try {
-//            String filePath = minioService.uploadFileToMinio(localFile, userId);
-//            System.out.println("需要更新数据库中fileId： "+fileId);
-//            File fileEntity = fileRepository.findByFileId(fileId);
-//            fileEntity.setFile_path(filePath);  // 设置 MinIO 的文件路径
-//            fileRepository.save(fileEntity);
-//            Files.delete(localFile);  // 上传成功后删除本地文件
-//
-//        } catch (Exception e) {
-//            e.printStackTrace(); // 异常处理
-//        }
-//    }
-//
-//
-//    public String storeFile(MultipartFile file, String userId,String sessionId) {
-//        Long file_id = uidClient.getUid();
-//
-//        // 上传请求
-//        System.out.println("收到上传请求");
-//        String fileName = StringUtils.cleanPath(file.getOriginalFilename());
-//
-//        Path targetLocation = this.fileStorageLocation.resolve(fileName);
-//
-//        try (InputStream inputStream = file.getInputStream();
-//             FileOutputStream outputStream = new FileOutputStream(targetLocation.toFile())){
-//
-//            // 上传进度：通过 WebSocket 发送进度
-//            long totalSize = file.getSize();
-//            long bytesRead = 0;
-//            byte[] buffer = new byte[1024];
-//            int bytesReadAtOnce;
-//
-//            var session = sessionHolder.getSession(sessionId);
-//            if (session == null || !session.isOpen()) {
-//                System.out.println("WebSocket session not found or closed for sessionId: " + sessionId);
-//            }
-//
-//            while ((bytesReadAtOnce = inputStream.read(buffer)) != -1) {
-//                outputStream.write(buffer, 0, bytesReadAtOnce);
-//                bytesRead += bytesReadAtOnce;
-//
-//                int progress = (int) ((bytesRead * 100) / totalSize);
-//                System.out.println("Upload progress: " + progress + "%");
-//
-//                if (session != null && session.isOpen()) {
-//                    String message = "{\"progress\": " + progress + "}";
-//                    session.send(Mono.just(session.textMessage(message))) //将消息包装成一个 Mono，这是 Reactive 编程的核心。
-//                            .subscribe(); // 订阅以触发发送
-//                }
-//            }
-//
-//
-//
-//            // 保存文件元数据到数据库
-//            File fileEntity = new File();
-//            fileEntity.setFileId(file_id);
-//            fileEntity.setFile_path("待配置");
-//            fileEntity.setFileName(fileName);
-//            fileEntity.setFile_size(String.valueOf(file.getSize()));
-//            fileEntity.setContent_type(file.getContentType());
-//            fileEntity.setFile_owner(userId);
-//            fileEntity.setUpload_time(LocalDateTime.now());
-//            fileEntity.setFile_hash(HashUtils.calculateSHA256(file));
-//
-//            fileRepository.save(fileEntity);
-//
-//            uploadToMinioAndClean(targetLocation, userId, file_id);
-//
-//            return targetLocation.toString();
-//        } catch (Exception e) {
-//            throw new RuntimeException("存储文件失败：" + fileName, e);
-//        }
-//    }
-//}

@@ -22,6 +22,10 @@ spring:
           uri: http://localhost:8002
           predicates:
             - Path=/api/v1/files/**
+        - id: download-svc
+          uri: http://localhost:8005
+          predicates:
+            - Path=/api/v1/download/**
 server:
   port: 8080
 

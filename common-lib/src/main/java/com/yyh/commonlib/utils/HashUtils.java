@@ -1,12 +1,13 @@
 package com.yyh.commonlib.utils;
 
 import lombok.extern.slf4j.Slf4j;
-import org.bouncycastle.util.encoders.Hex;
+import org.apache.commons.codec.binary.Hex;
 import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Mono;
 
 
+import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
@@ -17,6 +18,8 @@ import java.nio.file.Path;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.util.Base64;
 
 @Slf4j
 public class HashUtils {
@@ -26,11 +29,48 @@ public class HashUtils {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            return Hex.toHexString(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
+            byte[] digest = mac.doFinal(value.getBytes(StandardCharsets.UTF_8));
+            // Apache Commons Codec 的方法：
+            return Hex.encodeHexString(digest);
         } catch (NoSuchAlgorithmException | InvalidKeyException e) {
             log.error(e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * 使用 AES/ECB/PKCS5Padding 对给定文本进行加密，返回 URL-safe Base64。
+     */
+    public static String encryptWithKey(String value, String hexKey) {
+        try {
+            byte[] keyBytes = Hex.decodeHex(hexKey.toCharArray());
+            SecretKeySpec keySpec = new SecretKeySpec(keyBytes, "AES");
+            Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+            cipher.init(Cipher.ENCRYPT_MODE, keySpec);
+            byte[] encrypted = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(encrypted);
+        } catch (Exception e) {
+            log.error("Error encrypting: {}", e.getMessage());
+            throw new RuntimeException("加密失败", e);
+        }
+    }
+
+    /**
+     * 使用 AES/ECB/PKCS5Padding 对加密文本进行解密。
+     */
+    public static String decryptWithKey(String cipherText, String hexKey) {
+        try {
+            byte[] keyBytes = Hex.decodeHex(hexKey.toCharArray());
+            SecretKeySpec keySpec = new SecretKeySpec(keyBytes, "AES");
+            Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, keySpec);
+            byte[] decoded = Base64.getUrlDecoder().decode(cipherText);
+            byte[] original = cipher.doFinal(decoded);
+            return new String(original, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            log.error("Error decrypting: {}", e.getMessage());
+            throw new RuntimeException("解密失败", e);
+        }
     }
 
     /**
@@ -113,5 +153,19 @@ public class HashUtils {
         }
         return hexString.toString();
     }
-
+    /**
+     * 生成一个随机的加密密钥，以十六进制字符串返回。
+     * 如果你的加密算法要求 AES-128，则生成 16 字节（128 位）的密钥，
+     * 如需 AES-256 则将数组大小改为 32 字节。
+     *
+     * @return 随机生成的密钥的十六进制表示
+     */
+    public static String generateRandomEncryptionKey() {
+        // 生成一个 16 字节（128 位）的随机密钥
+        SecureRandom secureRandom = new SecureRandom();
+        byte[] keyBytes = new byte[16];
+        secureRandom.nextBytes(keyBytes);
+        // 用 Apache Commons Codec 将二进制密钥编码成十六进制字符串
+        return Hex.encodeHexString(keyBytes);
+    }
 }

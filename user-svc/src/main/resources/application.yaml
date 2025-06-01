@@ -1,8 +1,28 @@
 server:
   port: 8001
+
+kesvault:
+  url: http://localhost:8004/api/vault
+  secret-path-prefix: user-keys
 spring:
   datasource:
     url: jdbc:mysql://localhost:3306/openDisk
     username: root
     password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
+
+#ceph:
+#  rgw:
+#    endpoint: http://192.168.31.32:8000
+#    access-key: V5NJ666GBTCXOP7E30CO
+#    secret-key: RMJgwAIPBUIiPegvHkN744G5ilmloZn3fwYSgbJA
+minio:
+  url: http://192.168.31.4:9000
+  access-key: root
+  secret-key: 123456789@A
+
+ceph:
+  rgw:
+    endpoint: http://192.168.31.4:8000
+    access-key: SQ7J77WV118QQK187Y8N
+    secret-key: THy4mC4JOGtJc3c8Q4i8snkovQw3VR1H4Jgty0W6

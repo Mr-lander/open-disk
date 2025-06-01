@@ -1,54 +1,60 @@
 package com.yyh.kesvault.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.vault.core.VaultTemplate;
 import org.springframework.vault.support.VaultResponse;
 
-import java.util.Base64;
 import java.util.HashMap;
+
 import java.util.Map;
 
 @Service
 public class KesVaultService {
+    private final VaultTemplate vaultTemplate;
 
-    @Autowired
-    private VaultTemplate vaultTemplate;
+    // 从配置文件中获取 Vault 的基本 URL（例如：http://localhost:8200）
+    @Value("${Vault.url}")
+    private String vaultUrl;
 
-    // 在 Vault 中配置好的 Transit 密钥名称
-    private final String transitKeyName = "my-transit-key";
-
-    /**
-     * 使用 Vault Transit 引擎对传入的明文数据加密，返回加密后的密文。
-     * @param dataKey 明文数据密钥（DEK）
-     * @return 加密后的密文
-     */
-    public String encryptDataKey(String dataKey) {
-        // 先将明文转换为 Base64 编码
-        String base64Plaintext = Base64.getEncoder().encodeToString(dataKey.getBytes());
-        Map<String, Object> request = new HashMap<>();
-        request.put("plaintext", base64Plaintext);
-        VaultResponse response = vaultTemplate.write("transit/encrypt/" + transitKeyName, request);
-        if (response != null && response.getData() != null && response.getData().get("ciphertext") != null) {
-            return response.getData().get("ciphertext").toString();
-        }
-        throw new RuntimeException("加密失败");
+    public KesVaultService(VaultTemplate vaultTemplate) {
+        this.vaultTemplate = vaultTemplate;
     }
 
     /**
-     * 使用 Vault Transit 引擎对传入的密文进行解密，返回解密后的明文数据密钥。
-     * @param ciphertext 加密后的密文
-     * @return 解密后的明文数据密钥
+     * 从 Vault 中读取密钥
+     * @param path 密钥的路径，例如 "user-keys/1911036456084836352"
+     * @return 密钥值（encryptionKey），如果不存在则返回 null
      */
-    public String decryptDataKey(String ciphertext) {
-        Map<String, Object> request = new HashMap<>();
-        request.put("ciphertext", ciphertext);
-        VaultResponse response = vaultTemplate.write("transit/decrypt/" + transitKeyName, request);
-        if (response != null && response.getData() != null && response.getData().get("plaintext") != null) {
-            String base64Plaintext = response.getData().get("plaintext").toString();
-            byte[] decodedBytes = Base64.getDecoder().decode(base64Plaintext);
-            return new String(decodedBytes);
+    public String getSecret(String path) {
+        VaultResponse response = vaultTemplate.read("secret/data/" + path);
+        if (response != null && response.getData() != null) {
+            Map<String, Object> outerData = response.getData();
+            if (outerData.containsKey("data")) {
+                Map<String, Object> innerData = (Map<String, Object>) outerData.get("data");
+                if (innerData != null && innerData.containsKey("encryptionKey")) {
+                    return (String) innerData.get("encryptionKey");
+                }
+            }
         }
-        throw new RuntimeException("解密失败");
+        return null;
+    }
+
+    /**
+     * 向 Vault 中写入密钥
+     * @param path 存储密钥的路径，例如 "user-keys/1911036456084836352"
+     * @param encryptionKey 要存储的密钥值
+     */
+    public void writeSecret(String path, String encryptionKey) {
+// Step 1: Create the inner data map with your secret
+        Map<String, Object> secretData = new HashMap<>();
+        secretData.put("encryptionKey", encryptionKey);
+
+        // Step 2: Wrap it in a "data" field as Vault expects
+        Map<String, Object> requestData = new HashMap<>();
+        requestData.put("data", secretData);
+
+        // Step 3: Write to Vault with the correct path and data
+        vaultTemplate.write("secret/data/" + path, requestData);
     }
 }

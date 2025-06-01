@@ -5,26 +5,22 @@ import io.minio.*;
 import io.minio.http.Method;
 import io.minio.messages.Item;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
 
 // Reactor flux
 @Service
 public class MinioService {
 
-    @Autowired
-    private MinioClient minioClient;
+    private final MinioClient minioClient;
+
+    public MinioService(@Qualifier("hotMinioClient") MinioClient hotMinioClient) {
+        this.minioClient = hotMinioClient;
+    }
 
     /**
      * 上传文件到 MinIO
@@ -82,122 +78,50 @@ public class MinioService {
      * @param urlExpirySeconds 签名 URL 有效期（秒）
      * @return 包含文件元数据的 Flux 列表
      */
-    public Flux<FileMetadataDto> getAllFilesMetadata(String userId, int urlExpirySeconds) {
-        return Mono.fromCallable(() -> {
-                    // 检查桶是否存在
-                    boolean bucketExists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(userId).build());
-                    if (!bucketExists) {
-                        throw new RuntimeException("用户桶不存在");
-                    }
-                    return userId;
-                }).thenMany(Flux.create(sink -> {
-                    try {
-                        Iterable<Result<Item>> items = minioClient.listObjects(
-                                ListObjectsArgs.builder().bucket(userId).build()
-                        );
-                        for (Result<Item> result : items) {
-                            Item item = result.get();
-                            sink.next(item);
-                        }
-                        sink.complete();
-                    } catch (Exception e) {
-                        sink.error(new RuntimeException("列出 MinIO 文件失败", e));
-                    }
-                })).cast(Item.class)
-                .flatMap(item -> {
-                    String objectName = item.objectName();
-                    // 获取文件元数据并生成签名 URL
-                    return Mono.fromCallable(() -> {
-                        StatObjectResponse stat = minioClient.statObject(
-                                StatObjectArgs.builder().bucket(userId).object(objectName).build()
-                        );
-                        FileMetadataDto dto = new FileMetadataDto();
-                        dto.setFileName(objectName);
-                        dto.setFileSize(stat.size());
-                        dto.setContentType(stat.contentType());
-                        dto.setLastModified(stat.lastModified().toOffsetDateTime());
-                        String signedUrl = minioClient.getPresignedObjectUrl(
-                                GetPresignedObjectUrlArgs.builder()
-                                        .method(Method.GET)
-                                        .bucket(userId)
-                                        .object(objectName)
-                                        .expiry(urlExpirySeconds)
-                                        .build()
-                        );
-                        dto.setFileUrl(signedUrl);
-                        return dto;
-                    }).onErrorResume(e -> Mono.empty());
-                });
+    /**
+     * 列出用户桶下所有对象并组装元数据DTO，不包含 URL
+     */
+    public Flux<FileMetadataDto> getAllFilesMetadata(String userId) {
+        return Flux.create(sink -> {
+            try {
+                // 检查桶存在
+                boolean exists = minioClient.bucketExists(
+                        BucketExistsArgs.builder().bucket(userId).build()
+                );
+                if (!exists) {
+                    sink.error(new RuntimeException("用户桶不存在: " + userId));
+                    return;
+                }
+                // 列出对象
+                Iterable<Result<Item>> results = minioClient.listObjects(
+                        ListObjectsArgs.builder().bucket(userId).build()
+                );
+                for (Result<Item> res : results) {
+                    Item item = res.get();
+                    // 获取对象状态用于 size/contentType/lastModified
+                    StatObjectResponse stat = minioClient.statObject(
+                            StatObjectArgs.builder()
+                                    .bucket(userId)
+                                    .object(item.objectName())
+                                    .build()
+                    );
+                    FileMetadataDto dto = new FileMetadataDto(
+                            item.objectName(),
+                            stat.size(),
+                            stat.contentType(),
+                            stat.lastModified().toOffsetDateTime(),
+                            null
+                    );
+                    sink.next(dto);
+                }
+                sink.complete();
+            } catch (Exception e) {
+                sink.error(e);
+            }
+        });
     }
+
 
 
 }
 
-
-// Spring MVC
-//
-//@Service
-//public class MinioService {
-//
-//    @Autowired
-//    private MinioClient minioClient;
-//    // 其他已有的属性与构造方法略...
-//
-//    public String uploadFileToMinio(Path localFilePath, String userId) throws Exception {
-//        // 使用 userId 作为桶名
-//        String bucketName = userId;
-//
-//        // 检查桶是否存在
-//        boolean bucketExists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucketName).build());
-//        if (!bucketExists) {
-//            minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucketName).build());
-//        }
-//
-//        // 获取文件名
-//        String originalFileName = localFilePath.getFileName().toString();
-//
-//        // 检查文件是否存在
-//        File localFile = localFilePath.toFile();
-//        if (!localFile.exists()) {
-//            throw new IOException("文件不存在：" + originalFileName);
-//        }
-//
-//        // 上传文件到 MinIO
-//        try (FileInputStream fis = new FileInputStream(localFile)) {
-//            minioClient.putObject(
-//                    PutObjectArgs.builder()
-//                            .bucket(bucketName)
-//                            .object(originalFileName)
-//                            .stream(fis, localFile.length(), -1)
-//                            .contentType("application/octet-stream") // 默认的文件类型
-//                            .build()
-//            );
-//        } catch (IOException e) {
-//            throw new IOException("上传文件到 MinIO 失败", e);
-//        }
-//
-//        // 返回文件在 MinIO 中的存储路径（bucket/objectName）
-//        return bucketName + "/" + originalFileName;
-//    }
-//
-//    // 获取用户桶中的所有文件
-//    public List<String> getAllFilesInUserBucket(String userId) throws Exception {
-//        List<String> fileNames = new ArrayList<>();
-//
-//        // 检查桶是否存在
-//        boolean bucketExists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(userId).build());
-//        if (!bucketExists) {
-//            throw new RuntimeException("用户桶不存在");
-//        }
-//
-//        // 列出用户桶中的所有对象（文件）
-//        Iterable<Result<Item>> objects = minioClient.listObjects(ListObjectsArgs.builder().bucket(userId).build());
-//        for (Result<Item> object : objects) {
-//            Item item = object.get();
-//            fileNames.add(item.objectName());  // 将文件名添加到返回列表中
-//        }
-//
-//        return fileNames;  // 返回文件名列表
-//    }
-//
-//}

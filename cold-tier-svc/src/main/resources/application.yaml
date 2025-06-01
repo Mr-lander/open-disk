@@ -1,0 +1,64 @@
+server:
+  port: 8006
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: none   # cold-tier 只读写已有表
+  codec:
+    max-in-memory-size: 500MB
+  datasource:
+    url: jdbc:mysql://localhost:3306/openDisk
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  webflux:
+    multipart:
+      max-part-size: 10000MB    # 单个文件最大限制为 10MB
+      max-request-size: 100000MB # 整个请求最大限制为 100MB
+  servlet:
+    multipart:
+      max-request-size: 10000MB
+      max-file-size: 100000MB
+  main:
+    web-application-type: reactive
+
+file:
+  upload-dir: data
+
+kesvault:
+  url: http://192.168.31.4:8004
+  secret-path-prefix: user-keys
+
+open-disk:
+  uid-endpoint: 192.168.31.4:8003
+
+minio:
+  url: http://192.168.31.4:9000
+  access-key: root
+  secret-key: 123456789@A
+
+#ceph:
+#  rgw:
+#    endpoint: http://192.168.31.32:8000
+#    access-key: V5NJ666GBTCXOP7E30CO
+#    secret-key: RMJgwAIPBUIiPegvHkN744G5ilmloZn3fwYSgbJA
+
+ceph:
+  rgw:
+    endpoint: http://192.168.31.4:8000
+    access-key: SQ7J77WV118QQK187Y8N
+    secret-key: THy4mC4JOGtJc3c8Q4i8snkovQw3VR1H4Jgty0W6
+    secure: false         # 走明文 HTTP
+
+logging:
+  level:
+    org.springframework.web: DEBUG
+    org.springframework.http: DEBUG
+
+
+# 冷迁移策略
+tier:
+  cron: 1 * * * * *      # 每小時检查
+  access-threshold: 5     # 小于5次视为冷候选
+  days-threshold: 30      # 30天没访问视为冷候选

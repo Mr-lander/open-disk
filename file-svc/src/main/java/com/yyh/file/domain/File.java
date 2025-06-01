@@ -19,7 +19,12 @@ public class File {
     @Column(name = "file_id")
     private Long fileId;
 
-    private String file_path;
+    private LocalDateTime last_accessed; // 上次访问时间
+
+    private int access_count; // 访问次数
+
+    @Column(name = "file_path")
+    private String filePath;
 
     @Column(name = "file_name") // 修改为驼峰命名，数据库列名保持不变
     private String fileName;
@@ -29,7 +34,13 @@ public class File {
     // 文件 MIME 类型
     private String content_type;
 
-    private String file_owner;
+    @Column(name = "file_owner")
+    private Long fileOwner;
+
+    /** 当前对象是在热端（minio）还是冷端（ceph） */
+    @Column(name="storage_tier")
+    private String storageTier; // "HOT" 或 "COLD"
+
 
     // 文件上传时间
     private LocalDateTime upload_time;

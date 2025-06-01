@@ -1,0 +1,3 @@
+kesvault:
+  url: http://192.168.31.4:8004
+  secret-path-prefix: user-keys

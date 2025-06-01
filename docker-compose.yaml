@@ -22,20 +22,40 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.1
+    container_name: es_single
+    environment:
+      - node.name=es-node
+      - discovery.type=single-node
+      - xpack.security.enabled=false       # 开发时禁用安全认证
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m     # JVM 内存限制
+    ports:
+      - "9200:9200"                        # HTTP
+      - "9300:9300"                        # 集群通信
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
   vault:
     command:
       - "server"
     build: ./KES-Vault/docker
     ports:
-      - "8201:8200"
+      - "8200:8200"
     cap_add:
       - IPC_LOCK   # 防止 Vault 使用交换内存，提高安全性
     volumes:
-      - /docker/config/config.hcl:/KES-Vault/docker/config/config.hcl  # 挂载配置文件
+#      - /docker/config/config.hcl:/KES-Vault/docker/config/config.hcl  # 挂载配置文件
       - ./vault_data:/vault/data
     environment:
-      VAULT_ADDR: http://127.0.0.1:8201
+      VAULT_ADDR: http://127.0.0.1:8200
+
 volumes:
   mysql-data:
   minio-data:
   vault_data:
+  es-data:
+
+#networks:
+#  ceph-net:
+#    external: true

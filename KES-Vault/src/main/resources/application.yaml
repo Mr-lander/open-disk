@@ -1,2 +1,27 @@
 server:
   port: 8004
+Vault:
+  url: http://192.168.31.4:8200
+  secret-path-prefix: user-keys
+
+
+spring:
+  cloud:
+    vault:
+      token: hvs.J9hqLmAZt5h390TAZ0wLYkEw
+      uri: http://192.168.31.4:8200
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+
+#ceph:
+#  rgw:
+#    endpoint: http://192.168.31.32:8000
+#    access-key: V5NJ666GBTCXOP7E30CO
+#    secret-key: RMJgwAIPBUIiPegvHkN744G5ilmloZn3fwYSgbJA
+
+ceph:
+  rgw:
+    endpoint: http://192.168.31.4:8000
+    access-key: SQ7J77WV118QQK187Y8N
+    secret-key: THy4mC4JOGtJc3c8Q4i8snkovQw3VR1H4Jgty0W6

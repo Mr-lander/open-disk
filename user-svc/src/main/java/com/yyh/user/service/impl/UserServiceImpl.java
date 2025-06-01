@@ -2,9 +2,10 @@ package com.yyh.user.service.impl;
 
 import com.yyh.commonlib.utils.HashUtils;
 import com.yyh.commonlib.utils.JwtUtils;
+import com.yyh.user.client.VaultServiceClient;
+import com.yyh.user.client.UidServiceClient;
 import com.yyh.user.domain.User;
 import com.yyh.user.domain.registerUserDto;
-import com.yyh.user.domain.savedUserDto;
 import com.yyh.user.repository.UserRepository;
 import com.yyh.user.service.UserService;
 import com.yyh.userApi.LoginResponseDto;
@@ -26,6 +27,14 @@ public class UserServiceImpl implements UserService {
     @Autowired
     private ModelMapper modelMapper;
 
+    @Autowired
+    private VaultServiceClient vaultServiceClient;
+
+    @Autowired
+    private UidServiceClient uidServiceClient;
+
+
+
     @Override
     public Optional<User> findByName (String name) {
         return userRepository.findByName(name);
@@ -40,9 +49,22 @@ public class UserServiceImpl implements UserService {
     @Override
     public User save(registerUserDto userdto) {
         User user = new User();
+        long user_id = uidServiceClient.getUid("");
+        user.setId(user_id);
         user.setName(userdto.getName());
         user.setRole("ADMIN");
-        user.setPassword_hash(HashUtils.HashString(userdto.getPassword()));
+        String passwordHash = HashUtils.HashString(userdto.getPassword());
+        user.setPassword_hash(passwordHash);
+
+
+        String encryptionKey = HashUtils.generateRandomEncryptionKey();
+        vaultServiceClient.writeSecret("user-keys/" + user_id, encryptionKey);
+
+        // 使用vault存储的密钥加密这个加密哈希
+        assert passwordHash != null;
+        String encryptedHash = HashUtils.encryptWithKey(passwordHash, encryptionKey); // 自定义加密方法
+        user.setPassword_hash(encryptedHash);
+
         return userRepository.save(user);
     }
 
@@ -59,12 +81,22 @@ public class UserServiceImpl implements UserService {
     public Optional<LoginResponseDto> login(String username, String password) {
 //        String hash = HashUtils.HashString(password);
         return userRepository.findByName(username)
-                .filter(user -> Objects.equals(user.getPassword_hash(), HashUtils.HashString(password)))
+                .filter(user -> {
+                    // 先哈希
+                    String passwordHash = HashUtils.HashString(password);
+                    // 从 Vault 获取密钥
+                    String key = vaultServiceClient.getSecret("user-keys/" + user.getId());
+//                    String key = "";
+                    // 使用vault提取出来的密钥加密
+                    String encryptedHash_request = HashUtils.encryptWithKey(passwordHash, key);
+                    // 比较密码
+                    return Objects.equals(encryptedHash_request, user.getPassword_hash());
+                })
                 .map(user -> {
                     //ans: var是自动推断类型，不用写类型，但是必须赋值
                     var loginResponse = this.modelMapper.map(user, LoginResponseDto.class);
 
-                    loginResponse.setToken(JwtUtils.SignToken(user.getId(), user.getName(), user.getRole()));
+                    loginResponse.setToken(JwtUtils.SignToken(String.valueOf(user.getId()), user.getName(), user.getRole()));
 
                     return loginResponse;
                 });

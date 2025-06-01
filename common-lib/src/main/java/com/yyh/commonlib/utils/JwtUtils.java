@@ -16,7 +16,7 @@ public class JwtUtils {
     private static final String SECRET = "123456";
 
     // 设置过期时间，例如 1 分钟（单位：毫秒） 先默认
-    private static final long EXPIRATION_TIME = 3 * 60 * 1000;
+    private static final long EXPIRATION_TIME = 60 * 60 * 1000;
     public static String SignToken(String userId, String userName, String userRole) {
         try {
             Algorithm algorithm = Algorithm.HMAC256(SECRET.getBytes(Charset.defaultCharset()));

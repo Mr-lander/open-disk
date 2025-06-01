@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: kesvault
+  cloud:
+    vault:
+      uri: http://localhost:8200
+      # Token 认证方式，此处将 Vault token 配置进来，生产环境建议通过更安全的方式注入
+      token: hvs.J9hqLmAZt5h390TAZ0wLYkEw
+      # 指定 KV 秘钥引擎的版本、挂载路径等，例子中假设挂载在 secret/ 下使用 KV v1
+      generic:
+        enabled: true
+        backend: secret
+        default-context: application
+        profile-separator: '/'
