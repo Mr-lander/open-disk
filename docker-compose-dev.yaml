@@ -1,0 +1,114 @@
+version: "3.8"
+
+services:
+  # ---------- 基础设施 ----------
+  mysql:
+    build: ./mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: openDisk
+    ports: ["3306:3306"]
+    volumes: [mysql-data:/var/lib/mysql]
+
+  minio:
+    build: ./minio
+    environment:
+      MINIO_ROOT_USER: root
+      MINIO_ROOT_PASSWORD: 123456789@A
+    command: server /data --console-address ":9001"
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [minio-data:/data]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.1
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports: ["9200:9200", "9300:9300"]
+    volumes: [es-data:/usr/share/elasticsearch/data]
+
+  vault:
+    build: ./KES-Vault/docker
+    command: ["server"]
+    cap_add: ["IPC_LOCK"]
+    ports: ["8200:8200"]
+    volumes: [vault_data:/vault/data]
+
+  # ---------- 微服务 ----------
+  uid-generator:
+    build: ./uid-generator
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+    ports: ["8003:8003"]          # 方便本机调试
+    depends_on: [mysql]
+
+  user-svc:
+    build: ./user-svc
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DATASOURCE_URL: jdbc:mysql://mysql:3306/openDisk
+      DATASOURCE_USER: root
+      DATASOURCE_PASSWORD: 123456
+    ports: ["8001:8001"]
+    depends_on: [mysql, uid-generator]
+
+  file-svc:
+    build: ./file-svc
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      UID_ENDPOINT: uid-generator:8003
+      MINIO_URL: http://minio:9000
+      ELASTICSEARCH_URI: http://elasticsearch:9200
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/openDisk
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: 123456
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+    ports: ["8002:8002"]
+    depends_on: [mysql, minio, elasticsearch, uid-generator]
+
+  download-svc:
+    build: ./download-svc
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+    ports: ["8005:8005"]
+    depends_on: [file-svc]
+
+  cold-tier-svc:
+    build: ./cold-tier-svc
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+    ports: ["8006:8006"]
+    depends_on: [file-svc, ceph-rgw]
+
+  gateway:
+    build: ./gateway
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+    ports: ["8080:8080"]
+    depends_on: [user-svc, file-svc, download-svc]
+
+  # ---------- 前端 ----------
+  nginx:
+    image: nginx:1.25-alpine
+    ports: ["80:80"]
+    volumes:
+      - ./open-disk-frontend/dist:/usr/share/nginx/html:ro
+      - ./config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [gateway]
+
+  # ---------- 冷端 Ceph（可选） ----------
+  ceph-rgw:
+    image: ceph/daemon:latest-luminous
+    restart: unless-stopped
+    environment:
+      - RGW_NAME=rgw1
+    ports: ["8000:8000"]
+    volumes:
+      - ceph-data:/var/lib/ceph
+
+volumes:
+  mysql-data:
+  minio-data:
+  es-data:
+  vault_data:
+  ceph-data:
